@@ -630,6 +630,41 @@ function category(cp) {
 
 // ── Main analysis function ────────────────────────────────────
 const enc = new TextEncoder();
+// Unicode 15.1 InCB-aware grapheme splitter
+// Handles Indic conjuncts correctly unlike Intl.Segmenter (Unicode 15.0)
+function splitGraphemes(text) {
+  // InCB consonant ranges for Devanagari, Odia, Bengali etc.
+  const InCB_CONSONANT = /[\u0915-\u0939\u0958-\u095F\u0B15-\u0B39\u0995-\u09B9]/;
+  const InCB_LINKER    = /[\u094D\u0B4D\u09CD]/;  // Virama for Deva, Odia, Bengali
+
+  const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  const raw = [...seg.segment(text)].map(s => s.segment);
+
+  // Merge: consonant + virama + consonant + optional matra → one cluster
+  const merged = [];
+  let i = 0;
+  while (i < raw.length) {
+    let cluster = raw[i];
+    // Keep merging while next cluster starts with a Virama
+    while (
+      i + 1 < raw.length &&
+      InCB_LINKER.test(raw[i + 1][0]) &&
+      i + 2 < raw.length &&
+      InCB_CONSONANT.test(raw[i + 2][0])
+    ) {
+      cluster += raw[i + 1] + raw[i + 2];
+      i += 2;
+      // Also absorb a following matra (SpacingMark)
+      if (i + 1 < raw.length && /^\p{Mc}/u.test(raw[i + 1])) {
+        cluster += raw[i + 1];
+        i += 1;
+      }
+    }
+    merged.push(cluster);
+    i++;
+  }
+  return merged;
+}
 
 function analyze(text) {
   const codepoints = [...text];  // proper Unicode-aware split
@@ -651,8 +686,7 @@ function analyze(text) {
   // Grapheme clusters (Intl.Segmenter — supported in all modern browsers)
   let clusters;
   try {
-    const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-    clusters = [...seg.segment(text)].map(s => s.segment);
+    clusters = splitGraphemes(text);
   } catch(_) {
     clusters = codepoints;  // graceful fallback
   }
